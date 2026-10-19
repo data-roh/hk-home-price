@@ -1,5 +1,7 @@
 # Hong Kong Home-Price Model: Reconstruction, Challengers, and Scenario Lab
 
+**Live App:** [HK Home · Scenario Lab](https://hk-home-price.streamlit.app/)
+
 A self-contained research package built around the publicly disclosed methodology of the Bloomberg Intelligence (BI) Hong Kong home-price model. It:
 
 1. reconstructs the disclosed model family (GLS with autoregressive errors) on user-supplied monthly BQNT data;
