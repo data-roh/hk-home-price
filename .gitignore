@@ -7,7 +7,10 @@ __pycache__/
 .streamlit/secrets.toml
 .env
 .env.*
-data/
-outputs/
+data/*
+!data/extension_model_input.csv
+outputs/*
+!outputs/home_stationarity.csv
+!outputs/research_status.json
 notebooks/
 *.egg-info/

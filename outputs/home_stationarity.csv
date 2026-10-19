@@ -1,0 +1,13 @@
+series,transform,adf_pvalue,kpss_pvalue,adf_null,kpss_null,note
+home_price,level,0.9053302640633802,0.01,unit root,trend stationary,"Diagnostics, not an automatic differencing rule. Breaks and low power matter."
+home_price,first_difference,0.00031476790756586114,0.020806316582675156,unit root,level stationary,"Diagnostics, not an automatic differencing rule. Breaks and low power matter."
+fed_rate,level,0.058476532859210874,0.024125943899664735,unit root,trend stationary,"Diagnostics, not an automatic differencing rule. Breaks and low power matter."
+fed_rate,first_difference,0.0023627088925775655,0.1,unit root,level stationary,"Diagnostics, not an automatic differencing rule. Breaks and low power matter."
+hsi,level,0.25471670637320454,0.01,unit root,trend stationary,"Diagnostics, not an automatic differencing rule. Breaks and low power matter."
+hsi,first_difference,2.004237456268579e-28,0.1,unit root,level stationary,"Diagnostics, not an automatic differencing rule. Breaks and low power matter."
+secondary_sales,level,0.0015494350195811414,0.01,unit root,trend stationary,"Diagnostics, not an automatic differencing rule. Breaks and low power matter."
+secondary_sales,first_difference,1.4477539707075426e-09,0.1,unit root,level stationary,"Diagnostics, not an automatic differencing rule. Breaks and low power matter."
+home_rent,level,0.44753908492498545,0.01,unit root,trend stationary,"Diagnostics, not an automatic differencing rule. Breaks and low power matter."
+home_rent,first_difference,3.379249517077326e-07,0.1,unit root,level stationary,"Diagnostics, not an automatic differencing rule. Breaks and low power matter."
+cnyhkd,level,0.10155879636662385,0.1,unit root,trend stationary,"Diagnostics, not an automatic differencing rule. Breaks and low power matter."
+cnyhkd,first_difference,1.9154966229492962e-18,0.1,unit root,level stationary,"Diagnostics, not an automatic differencing rule. Breaks and low power matter."

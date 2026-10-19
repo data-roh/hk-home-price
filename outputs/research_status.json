@@ -1,0 +1,24 @@
+{
+  "data_mode": "USER_SUPPLIED_LATEST_VINTAGE",
+  "bqnt_runtime_required": false,
+  "office_model_available": false,
+  "office_blocker": "office_rent target is absent; office predictors alone cannot identify an office-rent model",
+  "home_complete_months": 199,
+  "home_first_complete": "2010-02",
+  "home_last_complete": "2026-08",
+  "specifications_fitted": [
+    "baseline",
+    "growth",
+    "ar2",
+    "fourier1",
+    "lag1",
+    "log",
+    "baseline_2011",
+    "alt_secondary",
+    "transactions_plus",
+    "value_plus"
+  ],
+  "failed_validation_origins": 0,
+  "ecm_status": "withheld; Cointegration not supported (p=0.919); ECM withheld. Assess integration order and breaks first.",
+  "interpretation": "Latest-vintage pseudo-OOS, not a release-vintage PIT backtest and not causal."
+}
