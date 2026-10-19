@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "hk-property-research"
+version = "0.1.0"
+description = "Transparent reconstruction and validation of two disclosed HK property model families"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.26,<2.5", "pandas>=2.2,<3", "scipy>=1.11,<2", "statsmodels>=0.14.4,<0.16", "matplotlib>=3.8,<4", "streamlit>=1.50,<2", "plotly>=5.24,<8"]
+[project.optional-dependencies]
+dev = ["pytest>=8", "nbformat>=5", "nbclient>=0.10", "ipykernel>=6"]
+[tool.setuptools.packages.find]
+where = ["src"]
+[tool.pytest.ini_options]
+pythonpath = ["src"]

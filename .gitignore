@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+.venv-streamlit/
+.streamlit/secrets.toml
+.env
+.env.*
+data/
+outputs/
+notebooks/
+*.egg-info/
