@@ -39,6 +39,7 @@ source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 
 python build_monthly_master.py     # source CSVs -> data/*.csv
+python build_asia_monthly_prices.py # optional: refresh fixed monthly Asia comparison
 python run_research_audit.py       # variable audit, model comparison, diagnostics -> outputs/
 python -m streamlit run app.py     # dashboard
 ```
@@ -60,7 +61,7 @@ For Streamlit Community Cloud, use a GitHub repository, `app.py` as the entrypoi
 ### Community Cloud deployment
 
 1. Confirm permission to upload and serve the supplied data. Do not publish Bloomberg-derived inputs without redistribution rights.
-2. Push the project to an authorized GitHub repository. Include `app.py`, `requirements.txt`, `src/hkproperty/`, `.streamlit/config.toml`, and `data/extension_model_input.csv`.
+2. Push the project to an authorized GitHub repository. Include `app.py`, `requirements.txt`, `src/hkproperty/`, `.streamlit/config.toml`, `data/extension_model_input.csv`, and the two tracked monthly `data/asia_home_prices_*` snapshot files.
 3. Include `outputs/home_stationarity.csv` and `outputs/research_status.json` for the Model tab's stationarity evidence and ECM status. The dashboard does not rebuild them during deployment. Other audit outputs remain available for notebook research but are not needed by the dashboard.
 4. In Streamlit Community Cloud, create an app from that repository and branch, select `app.py` as the main file, and choose Python 3.13 under advanced settings.
 5. Deploy, then verify the five tabs (Data, Model, Scenario, Extensions, Bubble index) and the controls within Scenario at the assigned app URL. The committed theme configuration keeps widgets and tables light; charts explicitly set their text colors and disable Streamlit's Plotly theme override.
@@ -82,12 +83,29 @@ python -m jupyter nbconvert --to notebook --execute notebooks/01_home_model_reco
 
 If you edit anything under `src/`, restart the notebook kernel; the `hkproperty` modules are cached.
 
+## Asia housing-price comparison
+
+The Data tab compares Hong Kong, China and Seoul using **188 consecutive monthly observations, 2011-01 through 2026-08**. All three series are observed monthly. The chart sets each series to 100 in a selected month, so it shows cumulative percentage movement from that month, not comparable home-price levels. It does not interpolate quarterly observations.
+
+| Monthly market | Measure | Status | Source |
+|---|---|---|---|
+| Hong Kong | RVD all-classes private domestic price index | Official index | [RVD](https://www.rvd.gov.hk/en/publications/property_market_statistics.html), via supplied model input |
+| China | Existing-home price changes in 70 cities, equal-city-weight chained geometric mean | **Constructed composite**, not an official national aggregate | [NBS monthly release](https://www.stats.gov.cn/sj/zxfb/202609/t20260915_1965304.html), [machine-readable transcription](https://github.com/changao1/70-China-cities-housing-index-data-by-national-bureau-of-statistics) |
+| Seoul | REB apartment actual-transaction sale-price index | Official index | [REB R-ONE](https://www.reb.or.kr/r-one/portal/stat/easyStatPage/A_2024_00178.do) |
+
+The China composite averages the log of each city's monthly previous-month-equals-100 existing-home index, then chains those mean log changes. This is a transparent descriptive construction, **not** an official national aggregate or a like-for-like substitute for Hong Kong's RVD index. Definitions and retrieval time are in `data/asia_home_prices_monthly_sources.json`; values are in `data/asia_home_prices_monthly.csv`. Run `build_asia_monthly_prices.py` to refresh the fixed snapshot. The app itself performs no network fetch.
+
+The Data tab also reports Pearson correlations of **monthly log changes**, using the full common sample independently of the chart base month. A small matrix shows same-month associations; a table compares Hong Kong with each foreign market in the same month and with that market one month earlier, always showing the number of paired months. Correlations in index levels are avoided because shared trends can be misleading. These correlations are descriptive: they do not account for publication dates, revisions, common shocks, or causal direction.
+
+The foreign series have **not** been added to either forecasting specification. A future extension would choose usable lags from actual publication dates and test incremental forecast performance on common monthly origins against the existing model and a random walk.
+
 ## Project layout
 
 ```text
 .
 ├─ app.py                     Streamlit scenario lab (5 tabs)
 ├─ build_monthly_master.py    Builds the monthly master and model inputs from source CSVs
+├─ build_asia_monthly_prices.py  Refreshes the monthly Hong Kong, China and Seoul comparison
 ├─ run_research_audit.py      Variable integration audit, common-origin model comparison, status file
 ├─ src/hkproperty/
 │  ├─ specs.py                Series metadata; HOME (level GLSAR) and GROWTH specifications
@@ -116,7 +134,7 @@ If you edit anything under `src/`, restart the notebook kernel; the `hkproperty`
 
 | Tab | Content |
 |---|---|
-| Data | Level and monthly growth charts, sample coverage, RVD definition, variables and units |
+| Data | Level and monthly growth charts, sample coverage, RVD definition, variables and units; monthly Hong Kong/China/Seoul comparison and exploratory change correlations |
 | Model | Notebook-reference Level/Growth estimated equations, coefficient/p-value tables, shared interpretation and estimation notes; expandable stationarity evidence |
 | Scenario | Growth by default, optional Level comparison, stress presets, 100 seeded residual-simulated Growth paths with bootstrap bands, end-horizon medians and CSV downloads |
 | Extensions | Explicit aggregate-model limitation and required regional disaggregation; notebook section 9 channels, policy layers, validation rules, seasonal regressors and ECM |

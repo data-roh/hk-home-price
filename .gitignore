@@ -9,6 +9,8 @@ __pycache__/
 .env.*
 data/*
 !data/extension_model_input.csv
+!data/asia_home_prices_monthly.csv
+!data/asia_home_prices_monthly_sources.json
 outputs/*
 !outputs/home_stationarity.csv
 !outputs/research_status.json

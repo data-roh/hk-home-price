@@ -68,6 +68,8 @@ DATA_PATH = PROJECT_DIR / "data" / "extension_model_input.csv"
 OUTPUT_DIR = PROJECT_DIR / "outputs"
 STATIONARITY_PATH = OUTPUT_DIR / "home_stationarity.csv"
 STATUS_PATH = OUTPUT_DIR / "research_status.json"
+ASIA_MONTHLY_PATH = PROJECT_DIR / "data" / "asia_home_prices_monthly.csv"
+ASIA_MONTHLY_SOURCE_PATH = PROJECT_DIR / "data" / "asia_home_prices_monthly_sources.json"
 AUDIT_HINT = "Run `python run_research_audit.py` from the project root to create this output."
 PALETTE = ["#087f83", "#d56734", "#5b4a9e"]
 REGIME_STYLES = {
@@ -130,7 +132,7 @@ tabs = st.tabs(["Data", "Model", "Scenario", "Extensions", "Bubble index"])
 
 
 def render_data_notes():
-    st.subheader("What is RVD?")
+    st.subheader("How to read the Hong Kong price index")
     st.markdown(
         "**RVD is the Rating and Valuation Department of the Hong Kong SAR Government.** It publishes official "
         "private domestic property price and rent indices using transaction and tenancy information. "
@@ -139,10 +141,16 @@ def render_data_notes():
         "as a factor. The five saleable-area classes are A: below 40 m²; B: 40–69.9 m²; C: 70–99.9 m²; "
         "D: 100–159.9 m²; E: 160 m² or above. All classes is an aggregate, not a district-specific or "
         "individual-flat valuation.\n\n"
-        "**1999 = 100 is an index base, not a currency price.** An index of 320 means the measured price "
-        "level is 3.2 times its 1999 base. A move from 320 to 321 is +1 index point but only about +0.31%, "
-        "not +1%. The rent index measures rents, not rental yields."
+        "**1999 = 100 is an index base, not a currency price or the price of a typical flat.** An index "
+        "of 320 means the measured level is 3.2 times its 1999 base. A move from 320 to 321 is +1 index "
+        "point but only about +0.31%, not +1%. Percentage change is $100(P_t/P_{t-1}-1)$; the growth "
+        "chart above uses $100\\Delta\\log P_t$, a close approximation for small changes.\n\n"
+        "The index is **nominal**: it does not remove consumer inflation, exchange-rate changes, "
+        "financing costs or floor-area differences. An index change describes the aggregate market, "
+        "not the appreciation of a particular flat. Recent releases may be provisional or revised. "
+        "The rent index measures rents, not rental yields."
     )
+    st.caption("Official reference: [RVD Hong Kong Property Review, private domestic price indices](https://www.rvd.gov.hk/doc/en/HKPR2026_Preliminary_Findings_Eng.pdf).")
 
     st.subheader("Variables and units")
     st.markdown(
@@ -154,6 +162,87 @@ def render_data_notes():
         "| $R_t$ | RVD private domestic rent index · home_rent | 1999 = 100 |\n"
         "| $C_t$ | Renminbi exchange rate · cnyhkd | HKD per 1 CNY |"
     )
+
+
+def render_asia_monthly_comparison():
+    st.markdown("**Monthly housing-price indices · 2011 onward**")
+    if not ASIA_MONTHLY_PATH.exists() or not ASIA_MONTHLY_SOURCE_PATH.exists():
+        st.info("The monthly snapshot is unavailable. Run `python build_asia_monthly_prices.py` to create it.")
+        return
+    comparison = pd.read_csv(ASIA_MONTHLY_PATH).set_index("month")
+    metadata = json.loads(ASIA_MONTHLY_SOURCE_PATH.read_text(encoding="utf-8"))
+    names = {"hong_kong": "Hong Kong · private", "china_70_city": "China · 70-city resale composite",
+             "seoul": "Seoul · apartments"}
+    colors = {"hong_kong": "#087f83", "china_70_city": "#5b4a9e", "seoul": "#305f96"}
+    bases = [period for period in ("2011-01", "2016-01", "2020-01", "2023-01") if period in comparison.index]
+    if not bases:
+        st.info("No common monthly comparison base is available.")
+        return
+    base = st.selectbox("Set every monthly series to 100 in", bases, key="asia_monthly_base")
+    rebased = 100 * comparison.loc[base:] / comparison.loc[base]
+    figure = go.Figure()
+    for code in names:
+        figure.add_trace(go.Scatter(
+            x=pd.to_datetime(rebased.index), y=rebased[code], customdata=rebased.index,
+            name=names[code], mode="lines", line={"color": colors[code], "width": 2.6},
+            hovertemplate="%{customdata}<br>%{y:.1f} · rebased<extra>" + names[code] + "</extra>",
+        ))
+    figure.add_hline(y=100, line_color="#607276", line_dash="dot", line_width=1)
+    figure.update_layout(height=440, yaxis_title=f"Index · {base} = 100", hovermode="x unified",
+                         legend={"orientation": "h", "y": -0.22}, **CHART)
+    st.plotly_chart(figure, width="stretch", theme=None, key="asia_monthly_comparison")
+    st.caption(
+        f"All three series are monthly; their common observed window is {comparison.index[0]}–{comparison.index[-1]} "
+        f"({len(comparison)} months). Snapshot retrieved {metadata['retrieved_utc'][:10]}. "
+        f"The chart sets {base} to 100, so 120 means a 20% increase since that month. "
+        "The rebased levels do not equalise home type, geography, currency or measurement method."
+    )
+    st.info("China's line is our equal-weighted composite of monthly indices for 70 cities, not an official "
+            "national aggregate. These comparisons are descriptive and are outside the fitted Hong Kong models.")
+    changes = 100 * np.log(comparison[list(names)]).diff()
+    changes = changes.dropna(how="any")
+    st.markdown("**Monthly change correlation · exploratory**")
+    st.caption("Pearson correlations use monthly log changes (100 × Δlog index), not trending index levels. "
+               "The full common sample is used regardless of the chart's display base.")
+    matrix = changes.corr()
+    labels = [names[code] for code in names]
+    heatmap = go.Figure(go.Heatmap(
+        z=matrix.values, x=labels, y=labels, zmin=-1, zmax=1,
+        colorscale=[[0, "#305f96"], [0.5, "#f2f5f3"], [1, "#b64c3d"]],
+        text=np.array([[f"{value:+.2f}" for value in row] for row in matrix.values]),
+        texttemplate="%{text}", textfont={"size": 14},
+        hovertemplate="%{y} / %{x}<br>Pearson r = %{z:.3f}<extra></extra>",
+        colorbar={"title": "r"},
+    ))
+    heatmap.update_layout(height=335, **CHART)
+    heatmap.update_layout(margin={"l": 8, "r": 8, "t": 12, "b": 8})
+    st.plotly_chart(heatmap, width="stretch", theme=None, key="asia_monthly_correlation")
+    rows = []
+    for code in ("china_70_city", "seoul"):
+        for lag, timing in ((0, "Same month"), (1, "Foreign change 1 month earlier")):
+            pair = pd.concat([changes["hong_kong"], changes[code].shift(lag)], axis=1).dropna()
+            rows.append({"Market vs Hong Kong": names[code], "Timing": timing,
+                         "Pearson r": pair.iloc[:, 0].corr(pair.iloc[:, 1]), "Months": len(pair)})
+    st.dataframe(pd.DataFrame(rows).style.format({"Pearson r": "{:+.2f}"}),
+                 width="stretch", hide_index=True)
+    st.caption("Same-month comparisons have no direction. A one-month lead is descriptive, not a feasible "
+               "forecast until release dates and data vintages are checked. Correlation does not establish causation.")
+    with st.expander("Monthly series definitions and construction"):
+        details = pd.DataFrame([
+            {"Market": names[code], "Coverage": metadata["series"][code]["coverage"],
+             "Latest original value": f"{comparison[code].iloc[-1]:.1f}",
+             "Type": "Official index" if code in ("hong_kong", "seoul") else "Constructed composite"}
+            for code in names
+        ])
+        st.dataframe(details, width="stretch", hide_index=True)
+        st.markdown(
+            "**China:** geometric mean of the 70 cities' monthly existing-home price changes, with one "
+            "equal weight per city, chained from 2011. Source: [NBS monthly city indices](https://www.stats.gov.cn/sj/zxfb/202609/t20260915_1965304.html), "
+            "[machine-readable transcription](https://github.com/changao1/70-China-cities-housing-index-data-by-national-bureau-of-statistics).\n\n"
+            "**Hong Kong:** [RVD all-classes private domestic](https://www.rvd.gov.hk/en/publications/property_market_statistics.html). "
+            "**Seoul:** [REB apartment actual transactions](https://www.reb.or.kr/r-one/portal/stat/easyStatPage/A_2024_00178.do). "
+            "The original published index bases differ; the chart's common base is only a display transformation."
+        )
 
 
 def render_model_equations():
@@ -240,6 +329,12 @@ def render_model_equations():
 
 # ---------------------------------------------------------------- Data
 with tabs[0]:
+    st.markdown(
+        '<div class="spec-note"><strong>Start here:</strong> the Hong Kong target is an RVD private-home '
+        'price <em>index</em> (1999 = 100). It tracks aggregate nominal price movements, not HKD per flat. '
+        'Read month-to-month moves as percentage changes; the detailed definition is below.</div>',
+        unsafe_allow_html=True,
+    )
     home_columns = [HOME.target, *HOME.features]
     series = st.selectbox("Series", home_columns, format_func=lambda c: SERIES_LABELS.get(c, c))
     values = raw_frame[series].dropna()
@@ -290,6 +385,9 @@ with tabs[0]:
     right.dataframe(raw_frame[home_columns].dropna().tail(6), width="stretch")
     st.caption("The model sample is the common fully observed block of all six series. Factors observed beyond the last "
                "target month are not used for estimation.")
+    st.divider()
+    st.subheader("Hong Kong, China and Seoul · monthly housing prices")
+    render_asia_monthly_comparison()
     st.divider()
     render_data_notes()
 
@@ -445,58 +543,64 @@ with tabs[2]:
     render_scenario()
 
 with tabs[3]:
-    st.subheader("Next variables · Hong Kong-specific channels")
+    st.subheader("Research roadmap")
+    st.caption("The current five predictors cover rates, equities, transactions, rent and FX. The cards show what can be explored next and what is still missing.")
+    roadmap = st.columns(4)
+    summaries = [
+        ("01 · Policy", "Event dates needed", "Code stamp duties and LTV changes before testing price responses."),
+        ("02 · Global firms", "Collection needed", "Track a stable panel of foreign finance and legal employers."),
+        ("03 · District activity", "Partial data", "FEHD restaurant licences exist from 2020; match them to regional prices."),
+        ("04 · Asian prices", "Monthly context", "China and Seoul comparisons and exploratory correlations are in Data; predictive value is untested."),
+    ]
+    for column, (heading, status, next_step) in zip(roadmap, summaries):
+        with column:
+            with st.container(border=True):
+                st.markdown(f"**{heading}**")
+                st.caption(status)
+                st.write(next_step)
     st.info(
-        "Current geographic scope: the Level and Growth models use a Hong Kong-wide, all-classes "
-        "home-price index. Scenario forecasts and Bubble index signals are also aggregate, not regional "
-        "or district-specific. District-level source data do not mean district models have been estimated."
+        "Current model, scenarios and Bubble index all use Hong Kong-wide prices. District data do not "
+        "make them regional forecasts; the Asia comparison is descriptive and outside the fitted model."
     )
-    st.markdown(
-        "The five current predictors cover rates, equities, activity, rent and FX. "
-        "Three Hong Kong-specific channels are missing from the current model."
-    )
-    st.markdown(
-        "| Priority | Channel | Why it matters in HK | Data today · notebook assessment |\n|---|---|---|---|\n"
-        "| 1 | **Government policy stance** | Stamp duties, loan-to-value (LTV) caps and land supply can influence housing demand and prices | No model-ready stance index; a hand-coded event layer is outlined in the notebook |\n"
-        "| 2 | **Foreign finance and legal firms: office expansion and hiring** | Expat and high-income demand may affect rents and large-unit prices | Not usable: government job ads do not measure this channel; employer snapshots are insufficient |\n"
-        "| 3 | **District commercial activity: restaurants** | A timely, granular proxy for local footfall and neighbourhood demand | FEHD restaurant licences, 18 districts, monthly from 2020 |"
-    )
-    st.subheader("Required next step · regional disaggregation")
-    st.markdown(
-        "**Regional analysis is required before drawing local housing-market conclusions.** "
-        "Hong Kong-wide averages can conceal different price cycles, demand and policy exposure.\n\n"
-        "- **Start with Hong Kong Island, Kowloon and the New Territories.** Build separate price and rent targets, "
-        "then move to the 18 districts only where consistent target coverage is available.\n"
-        "- **Match the geography of target and predictors.** Align regional prices with local transactions, "
-        "restaurant activity, firm locations and hiring exposure. Do not attach district predictors to the "
-        "aggregate target and present the result as a district forecast. Fed rates and FX can remain common factors.\n"
-        "- **Keep geography and unit size distinct.** RVD Classes A–E are size groups, not regions; large-unit "
-        "and regional segmentation answer different questions.\n"
-        "- **Validate by region on common dates.** Check sample length, boundary consistency and publication "
-        "timing; compare each regional model with its own Growth and random-walk benchmarks. A district "
-        "panel is a candidate when individual histories are short, not a substitute for missing local targets."
-    )
-    st.markdown(
-        "**Test rule**\n"
-        "- Add changes in one channel at a time to the **Growth model**.\n"
-        "- Compare on **common forecast origins**, using only information available at each origin.\n"
-        "- Retain a channel only if it improves out-of-sample performance against **both the Growth model and a random walk**."
-    )
-    st.subheader("Government policy stance and sentiment")
-    st.markdown("**Question: is the government trying to cool, hold or support prices?**")
-    st.markdown(
-        "| Layer | Construction | Frequency |\n|---|---|---|\n"
-        "| Events | Stamp-duty and HKMA LTV changes: +1 easing / −1 tightening, assigned to announcement month | Irregular |\n"
-        "| Text sentiment | Label housing-related official releases cooling / neutral / supportive; monthly index = (supportive − cooling) / total | Monthly |\n"
-        "| Supply | Land-sale programme and public-housing targets | Annual / quarterly |\n\n"
-        "Text sources: Policy Address, Budget, Hong Kong Monetary Authority (HKMA), Housing Bureau and "
-        "info.gov.hk press releases. Dictionary or LLM labels require validation against a hand-audited sample. "
-        "Months without releases should be missing, not automatically neutral.\n\n"
-        "**Timing:** keep announcement and effective dates separate; prices may react at announcement. "
-        "Verify policy dates against the Gazette or Inland Revenue Department (IRD) before modelling. "
-        "**Method:** with only a few major events, begin with an event study rather than a large regression. "
-        "The proposed index is not yet a validated or integrated predictor."
-    )
+    st.markdown("**Open a section below for the research design and limitations.**")
+    with st.expander("Regional targets and validation rule"):
+        st.subheader("Required next step · regional disaggregation")
+        st.markdown(
+            "**Regional analysis is required before drawing local housing-market conclusions.** "
+            "Hong Kong-wide averages can conceal different price cycles, demand and policy exposure.\n\n"
+            "- **Start with Hong Kong Island, Kowloon and the New Territories.** Build separate price and rent targets, "
+            "then move to the 18 districts only where consistent target coverage is available.\n"
+            "- **Match the geography of target and predictors.** Align regional prices with local transactions, "
+            "restaurant activity, firm locations and hiring exposure. Do not attach district predictors to the "
+            "aggregate target and present the result as a district forecast. Fed rates and FX can remain common factors.\n"
+            "- **Keep geography and unit size distinct.** RVD Classes A–E are size groups, not regions; large-unit "
+            "and regional segmentation answer different questions.\n"
+            "- **Validate by region on common dates.** Check sample length, boundary consistency and publication "
+            "timing; compare each regional model with its own Growth and random-walk benchmarks. A district "
+            "panel is a candidate when individual histories are short, not a substitute for missing local targets."
+        )
+        st.markdown(
+            "**Test rule**\n"
+            "- Add changes in one channel at a time to the **Growth model**.\n"
+            "- Compare on **common forecast origins**, using only information available at each origin.\n"
+            "- Retain a channel only if it improves out-of-sample performance against **both the Growth model and a random walk**."
+        )
+    with st.expander("Government policy · event and sentiment design"):
+        st.subheader("Government policy stance and sentiment")
+        st.markdown("**Question: is the government trying to cool, hold or support prices?**")
+        st.markdown(
+            "| Layer | Construction | Frequency |\n|---|---|---|\n"
+            "| Events | Stamp-duty and HKMA LTV changes: +1 easing / −1 tightening, assigned to announcement month | Irregular |\n"
+            "| Text sentiment | Label housing-related official releases cooling / neutral / supportive; monthly index = (supportive − cooling) / total | Monthly |\n"
+            "| Supply | Land-sale programme and public-housing targets | Annual / quarterly |\n\n"
+            "Text sources: Policy Address, Budget, Hong Kong Monetary Authority (HKMA), Housing Bureau and "
+            "info.gov.hk press releases. Dictionary or LLM labels require validation against a hand-audited sample. "
+            "Months without releases should be missing, not automatically neutral.\n\n"
+            "**Timing:** keep announcement and effective dates separate; prices may react at announcement. "
+            "Verify policy dates against the Gazette or Inland Revenue Department (IRD) before modelling. "
+            "**Method:** with only a few major events, begin with an event study rather than a large regression. "
+            "The proposed index is not yet a validated or integrated predictor."
+        )
     with st.expander("Foreign finance and legal firms · collection plan"):
         st.markdown(
             "Track overseas-parent regional headquarters (C&SD/InvestHK), SFC licensed firms and persons, "
@@ -518,57 +622,73 @@ with tabs[3]:
             "48-month initial window and 1–3-month horizons, alongside a district panel."
         )
     st.caption("Source: 01_home_model_reconstruction.ipynb §9–9.3. Data availability describes the supplied notebook, not a live source audit.")
-    st.divider()
-    st.subheader("Seasonality as additional regressors")
-    st.markdown(
-        "Seasonality is a **set of explanatory variables**, not a third economic model. Candidate controls "
-        "are 11 month-of-year dummies (with an intercept) or a parsimonious annual sine/cosine pair. "
-        "They can be added to a Level or Growth specification and tested on common forecast origins. "
-        "The two core scenario models currently omit seasonal controls; the notebook's seasonal experiment "
-        "did not improve out-of-sample performance. No untested seasonal term is silently added here."
-    )
-    st.divider()
-    st.subheader("If cointegration were supported: ECM")
-    st.markdown(
-        "An **error-correction model** combines a long-run level relation with short-run growth dynamics. "
-        "Estimate the long-run relation, test its residual using cointegration-specific critical values, "
-        "then include the lagged deviation in the growth equation. The equations below are illustrative, "
-        "not fitted results for this sample."
-    )
-    st.latex(
-        r"\begin{aligned} \log y_t &= \theta_0 + \theta^{\top}w_t + u_t \\"
-        r"g_t &= c + \alpha\widehat{u}_{t-1} \\"
-        r"&\quad + \phi g_{t-1} + \gamma^{\top}\Delta v_{t-1} + \varepsilon_t \end{aligned}"
-    )
-    st.markdown(
-        "Here $w_t$ contains the long-run factors, $v_t$ the short-run factors, and "
-        "$\\widehat{u}_{t-1}$ is last month's actual minus fitted log price. **$\\theta$ describes the "
-        "equilibrium, $\\gamma$ the short-run response, and $\\alpha$ the adjustment speed.** A positive "
-        "deviation is a price above the fitted relation, not necessarily fundamental overvaluation. "
-        "A negative adjustment coefficient is consistent with correction; stability and statistical "
-        "uncertainty still need checking.\n\n"
-        "For illustration, $\\alpha=-0.05$ closes 5% of the gap each month in a fixed-equilibrium model "
-        "without other dynamics: the half-life is about 13.5 months. Momentum and moving factors change "
-        "this calculation. The Growth model's accumulated response extrapolates short-run dynamics; "
-        "an ECM's long-run destination instead comes from the estimated equilibrium relation."
-    )
-    st.info(
-        "The project's cointegration gate does not support estimating its ECM on the current sample. "
-        "This is insufficient evidence for a long-run relation, not proof that none exists. The ECM "
-        "implementation also uses different factor selection and lags from the Growth model; it is not "
-        "identical apart from adding an error-correction term."
-    )
-    with st.expander("Further econometric checks"):
+    with st.expander("Asian housing markets · candidate factor"):
         st.markdown(
-            "DOLS or FMOLS can support long-run coefficient inference under appropriate assumptions; "
-            "ordinary OLS t-tests in a cointegrating regression are generally invalid. Stationary ECM "
-            "terms alone do not guarantee valid inference: exogeneity, dynamics and residual behavior "
-            "still matter. Johansen/VECM methods allow multiple cointegrating relations and examine "
-            "which variables adjust. ARDL bounds testing can accommodate I(0)/I(1) mixtures, but not "
-            "I(2) variables, and requires suitable assumptions and critical values. Gregory–Hansen "
-            "tests allow a specified single structural break in the cointegrating relation."
+            "Data compares monthly Hong Kong, China and Seoul housing-price indices over their common "
+            "observed period. China is a constructed 70-city existing-home composite; Seoul measures "
+            "apartments and Hong Kong measures all private domestic classes. The Data tab reports "
+            "same-month and one-month-lead correlations in log changes. Co-movement may reflect common "
+            "rates or capital flows and does not establish an effect on Hong Kong."
         )
-    st.caption("Detailed forecast evaluation, residual diagnostics and extension experiments remain in the source notebook.")
+        st.markdown(
+            "**First test:** add one lagged monthly log-price change from Seoul or the China composite "
+            "to the Hong Kong Growth model at a time. Choose lags from publication dates; compare common "
+            "forecast origins and horizons against the existing Growth "
+            "model and a random walk. Use a holdout or account for trying multiple markets. The saved "
+            "series are latest-vintage snapshots; a true point-in-time backtest needs archived releases."
+        )
+        st.caption("Status: data collected for comparison; coefficients, incremental forecast value and causal effects have not been estimated.")
+    with st.expander("Seasonality · tested control"):
+        st.subheader("Seasonality as additional regressors")
+        st.markdown(
+            "Seasonality is a **set of explanatory variables**, not a third economic model. Candidate controls "
+            "are 11 month-of-year dummies (with an intercept) or a parsimonious annual sine/cosine pair. "
+            "They can be added to a Level or Growth specification and tested on common forecast origins. "
+            "The two core scenario models currently omit seasonal controls; the notebook's seasonal experiment "
+            "did not improve out-of-sample performance. No untested seasonal term is silently added here."
+        )
+    with st.expander("ECM and further econometric checks"):
+        st.subheader("If cointegration were supported: ECM")
+        st.markdown(
+            "An **error-correction model** combines a long-run level relation with short-run growth dynamics. "
+            "Estimate the long-run relation, test its residual using cointegration-specific critical values, "
+            "then include the lagged deviation in the growth equation. The equations below are illustrative, "
+            "not fitted results for this sample."
+        )
+        st.latex(
+            r"\begin{aligned} \log y_t &= \theta_0 + \theta^{\top}w_t + u_t \\"
+            r"g_t &= c + \alpha\widehat{u}_{t-1} \\"
+            r"&\quad + \phi g_{t-1} + \gamma^{\top}\Delta v_{t-1} + \varepsilon_t \end{aligned}"
+        )
+        st.markdown(
+            "Here $w_t$ contains the long-run factors, $v_t$ the short-run factors, and "
+            "$\\widehat{u}_{t-1}$ is last month's actual minus fitted log price. **$\\theta$ describes the "
+            "equilibrium, $\\gamma$ the short-run response, and $\\alpha$ the adjustment speed.** A positive "
+            "deviation is a price above the fitted relation, not necessarily fundamental overvaluation. "
+            "A negative adjustment coefficient is consistent with correction; stability and statistical "
+            "uncertainty still need checking.\n\n"
+            "For illustration, $\\alpha=-0.05$ closes 5% of the gap each month in a fixed-equilibrium model "
+            "without other dynamics: the half-life is about 13.5 months. Momentum and moving factors change "
+            "this calculation. The Growth model's accumulated response extrapolates short-run dynamics; "
+            "an ECM's long-run destination instead comes from the estimated equilibrium relation."
+        )
+        st.info(
+            "The project's cointegration gate does not support estimating its ECM on the current sample. "
+            "This is insufficient evidence for a long-run relation, not proof that none exists. The ECM "
+            "implementation also uses different factor selection and lags from the Growth model; it is not "
+            "identical apart from adding an error-correction term."
+        )
+        with st.expander("Further econometric checks"):
+            st.markdown(
+                "DOLS or FMOLS can support long-run coefficient inference under appropriate assumptions; "
+                "ordinary OLS t-tests in a cointegrating regression are generally invalid. Stationary ECM "
+                "terms alone do not guarantee valid inference: exogeneity, dynamics and residual behavior "
+                "still matter. Johansen/VECM methods allow multiple cointegrating relations and examine "
+                "which variables adjust. ARDL bounds testing can accommodate I(0)/I(1) mixtures, but not "
+                "I(2) variables, and requires suitable assumptions and critical values. Gregory–Hansen "
+                "tests allow a specified single structural break in the cointegrating relation."
+            )
+        st.caption("Detailed forecast evaluation, residual diagnostics and extension experiments remain in the source notebook.")
 
 
 def price_cycle_signals(frame):
@@ -642,6 +762,26 @@ def render_markov_outlook(signals):
     if (totals < 10).any():
         sparse = ", ".join(f"{name}: {int(totals[name])}" for name in totals.index if totals[name] < 10)
         st.info(f"Sparse transition rows (fewer than 10 observations): {sparse}. Treat these probabilities as exploratory.")
+    st.markdown("**One-month transition map**")
+    heatmap = go.Figure(go.Heatmap(
+        z=100 * probabilities.to_numpy(), x=list(probabilities.columns), y=list(probabilities.index),
+        customdata=counts.to_numpy(), zmin=0, zmax=100,
+        colorscale=[[0, "#edf3f1"], [0.5, "#8ec7c2"], [1, "#075c60"]],
+        colorbar={"title": "%", "ticksuffix": "%"},
+        hovertemplate="Current: %{y}<br>Next: %{x}<br>Smoothed probability: %{z:.1f}%"
+                      "<br>Observed transitions: %{customdata}<extra></extra>",
+    ))
+    for row, state in enumerate(probabilities.index):
+        for col, next_state in enumerate(probabilities.columns):
+            probability = 100 * probabilities.iloc[row, col]
+            heatmap.add_annotation(
+                x=next_state, y=state, text=f"{probability:.0f}%", showarrow=False,
+                font={"color": "#ffffff" if probability >= 58 else "#132b2e", "size": 16},
+            )
+    heatmap.update_layout(height=370, xaxis_title="Next month", yaxis_title="Current month", **CHART)
+    heatmap.update_yaxes(autorange="reversed")
+    st.plotly_chart(heatmap, width="stretch", theme=None, key="bubble_markov_heatmap")
+    st.caption("Each row sums to 100%. Hover over a cell for its observed count; displayed percentages include 0.5 pseudo-count per cell. The row sample size is shown in the table below.")
     if current in probabilities.index:
         distribution = np.zeros(len(probabilities))
         distribution[list(probabilities.index).index(current)] = 1.0

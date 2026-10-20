@@ -1,0 +1,27 @@
+{
+  "retrieved_utc": "2026-10-20T16:01:06+00:00",
+  "first_month": "2011-01",
+  "last_month": "2026-08",
+  "observations": 188,
+  "series": {
+    "hong_kong": {
+      "provider": "Hong Kong RVD via supplied model input",
+      "coverage": "private domestic, all classes",
+      "method": "Official monthly price index, 1999 = 100",
+      "url": "https://www.rvd.gov.hk/en/publications/property_market_statistics.html"
+    },
+    "china_70_city": {
+      "provider": "National Bureau of Statistics of China; machine-readable transcription by Chang Gao",
+      "coverage": "existing residential buildings in 70 cities",
+      "method": "Our equal-city-weight chained geometric mean of official monthly city indices (previous month = 100); 2011-01 = 100. This composite is not an official national aggregate.",
+      "url": "https://www.stats.gov.cn/sj/zxfb/202609/t20260915_1965304.html",
+      "transcription_url": "https://github.com/changao1/70-China-cities-housing-index-data-by-national-bureau-of-statistics"
+    },
+    "seoul": {
+      "provider": "Korea Real Estate Board R-ONE",
+      "coverage": "Seoul apartments, actual transactions",
+      "method": "Official monthly sale-price index; 2026 June = 100 in retrieved vintage",
+      "url": "https://www.reb.or.kr/r-one/portal/stat/easyStatPage/A_2024_00178.do"
+    }
+  }
+}
