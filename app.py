@@ -753,6 +753,100 @@ def cycle_transition_probabilities(states):
     return counts, probabilities
 
 
+def render_markov_transition_graph(probabilities, counts, current):
+    names = list(probabilities.index)
+    selection = st.selectbox("Show arrows from", [*names, "All states"],
+                             index=names.index(current) if current in names else len(names),
+                             key="bubble_markov_source")
+    all_states = selection == "All states"
+    positions = {
+        "Heating up": np.array([0.0, 0.95]),
+        "Cooling": np.array([1.35, 0.0]),
+        "Weakening": np.array([0.0, -0.95]),
+        "Recovery": np.array([-1.35, 0.0]),
+    }
+    figure = go.Figure()
+    radius = 0.32
+    for source in (names if all_states else [selection]):
+        origin = positions[source]
+        color = REGIME_STYLES[source]["color"]
+        for destination in names:
+            target = positions[destination]
+            probability = 100 * float(probabilities.loc[source, destination])
+            width = (1.5 if all_states else 2) + probability / (27 if all_states else 20)
+            if destination == source:
+                outward = origin / np.linalg.norm(origin)
+                tangent = np.array([-outward[1], outward[0]])
+                start = origin + 0.27 * outward - 0.17 * tangent
+                end = origin + 0.27 * outward + 0.17 * tangent
+                control_one = origin + 0.88 * outward - 0.55 * tangent
+                control_two = origin + 0.88 * outward + 0.55 * tangent
+                steps = np.linspace(0, 1, 35)
+                points = np.array([
+                    (1 - t) ** 3 * start + 3 * (1 - t) ** 2 * t * control_one
+                    + 3 * (1 - t) * t ** 2 * control_two + t ** 3 * end
+                    for t in steps
+                ])
+                label = origin + 0.80 * outward
+            else:
+                direction = (target - origin) / np.linalg.norm(target - origin)
+                start = origin + radius * direction
+                end = target - radius * direction
+                steps = np.linspace(0, 1, 35)
+                if all_states:
+                    bend = 0.16 * np.array([-direction[1], direction[0]])
+                    control = (start + end) / 2 + bend
+                    points = np.array([(1 - t) ** 2 * start + 2 * (1 - t) * t * control
+                                       + t ** 2 * end for t in steps])
+                else:
+                    points = np.linspace(start, end, 35)
+                label = points[19]
+            figure.add_trace(go.Scatter(
+                x=points[:, 0], y=points[:, 1], mode="lines",
+                line={"color": color, "width": width}, showlegend=False,
+                hovertemplate=f"{source} → {destination}<br>Smoothed probability: {probability:.1f}%"
+                              f"<br>Observed transitions: {int(counts.loc[source, destination])}<extra></extra>",
+            ))
+            figure.add_annotation(
+                x=float(points[-1, 0]), y=float(points[-1, 1]),
+                ax=float(points[-4, 0]), ay=float(points[-4, 1]),
+                xref="x", yref="y", axref="x", ayref="y", text="", showarrow=True,
+                arrowhead=3, arrowsize=1.5, arrowwidth=width, arrowcolor=color,
+            )
+            if not all_states:
+                figure.add_annotation(
+                    x=float(label[0]), y=float(label[1]), text=f"{probability:.0f}%",
+                    showarrow=False, font={"size": 13, "color": "#132b2e"},
+                    bgcolor="#ffffff", bordercolor=color, borderwidth=1, borderpad=3,
+                )
+    for name, center in positions.items():
+        style = REGIME_STYLES[name]
+        figure.add_shape(
+            type="circle", x0=center[0] - radius, x1=center[0] + radius,
+            y0=center[1] - radius, y1=center[1] + radius,
+            fillcolor=style["fill"], line={"color": style["color"], "width": 4 if name == selection else 2},
+        )
+        figure.add_annotation(
+            x=float(center[0]), y=float(center[1]), text=name.replace(" ", "<br>"),
+            showarrow=False, font={"size": 14, "color": "#132b2e"},
+        )
+    figure.update_layout(height=510, showlegend=False, **CHART)
+    figure.update_layout(margin={"l": 5, "r": 5, "t": 10, "b": 5})
+    figure.update_xaxes(visible=False, range=[-2.35, 2.35], fixedrange=True)
+    figure.update_yaxes(visible=False, range=[-2.0, 2.0], fixedrange=True,
+                        scaleanchor="x", scaleratio=1)
+    st.plotly_chart(figure, width="stretch", theme=None, key="bubble_markov_graph")
+    if all_states:
+        st.caption("All one-month transitions are shown. Arrow colour identifies the starting state; "
+                   "curved outer arrows return to the same state. Hover for probabilities and observed counts. "
+                   "The forecast below starts from the latest observed state.")
+    else:
+        st.caption(f"Arrows show one-month probabilities from {selection}; the curved outer arrow returns "
+                   f"to the same state. Line width follows probability. Observed transitions from this "
+                   f"state: {int(counts.loc[selection].sum())}. The forecast below starts from the latest "
+                   "observed state.")
+
+
 def render_markov_outlook(signals):
     st.subheader("Markov state outlook")
     counts, probabilities = cycle_transition_probabilities(signals["regime"])
@@ -762,26 +856,8 @@ def render_markov_outlook(signals):
     if (totals < 10).any():
         sparse = ", ".join(f"{name}: {int(totals[name])}" for name in totals.index if totals[name] < 10)
         st.info(f"Sparse transition rows (fewer than 10 observations): {sparse}. Treat these probabilities as exploratory.")
-    st.markdown("**One-month transition map**")
-    heatmap = go.Figure(go.Heatmap(
-        z=100 * probabilities.to_numpy(), x=list(probabilities.columns), y=list(probabilities.index),
-        customdata=counts.to_numpy(), zmin=0, zmax=100,
-        colorscale=[[0, "#edf3f1"], [0.5, "#8ec7c2"], [1, "#075c60"]],
-        colorbar={"title": "%", "ticksuffix": "%"},
-        hovertemplate="Current: %{y}<br>Next: %{x}<br>Smoothed probability: %{z:.1f}%"
-                      "<br>Observed transitions: %{customdata}<extra></extra>",
-    ))
-    for row, state in enumerate(probabilities.index):
-        for col, next_state in enumerate(probabilities.columns):
-            probability = 100 * probabilities.iloc[row, col]
-            heatmap.add_annotation(
-                x=next_state, y=state, text=f"{probability:.0f}%", showarrow=False,
-                font={"color": "#ffffff" if probability >= 58 else "#132b2e", "size": 16},
-            )
-    heatmap.update_layout(height=370, xaxis_title="Next month", yaxis_title="Current month", **CHART)
-    heatmap.update_yaxes(autorange="reversed")
-    st.plotly_chart(heatmap, width="stretch", theme=None, key="bubble_markov_heatmap")
-    st.caption("Each row sums to 100%. Hover over a cell for its observed count; displayed percentages include 0.5 pseudo-count per cell. The row sample size is shown in the table below.")
+    st.markdown("**One-month state transitions**")
+    render_markov_transition_graph(probabilities, counts, current)
     if current in probabilities.index:
         distribution = np.zeros(len(probabilities))
         distribution[list(probabilities.index).index(current)] = 1.0
@@ -807,6 +883,25 @@ def render_markov_outlook(signals):
     else:
         st.info("A current four-state classification is needed to initialise the Markov outlook.")
     with st.expander("Transition matrix and observed counts"):
+        heatmap = go.Figure(go.Heatmap(
+            z=100 * probabilities.to_numpy(), x=list(probabilities.columns), y=list(probabilities.index),
+            customdata=counts.to_numpy(), zmin=0, zmax=100,
+            colorscale=[[0, "#edf3f1"], [0.5, "#8ec7c2"], [1, "#075c60"]],
+            colorbar={"title": "%", "ticksuffix": "%"},
+            hovertemplate="Current: %{y}<br>Next: %{x}<br>Smoothed probability: %{z:.1f}%"
+                          "<br>Observed transitions: %{customdata}<extra></extra>",
+        ))
+        for row, state in enumerate(probabilities.index):
+            for col, next_state in enumerate(probabilities.columns):
+                probability = 100 * probabilities.iloc[row, col]
+                heatmap.add_annotation(
+                    x=next_state, y=state, text=f"{probability:.0f}%", showarrow=False,
+                    font={"color": "#ffffff" if probability >= 58 else "#132b2e", "size": 16},
+                )
+        heatmap.update_layout(height=370, xaxis_title="Next month", yaxis_title="Current month", **CHART)
+        heatmap.update_yaxes(autorange="reversed")
+        st.plotly_chart(heatmap, width="stretch", theme=None, key="bubble_markov_heatmap")
+        st.caption("Each row sums to 100%. Hover over a cell for its observed count; displayed percentages include 0.5 pseudo-count per cell.")
         st.markdown("**Smoothed transition probabilities · rows: current, columns: next month**")
         st.dataframe(probabilities.style.format("{:.1%}"), width="stretch")
         st.markdown("**Observed monthly transitions · excludes gaps and unclassified months**")
