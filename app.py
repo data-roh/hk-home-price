@@ -562,6 +562,85 @@ with tabs[3]:
         "Current model, scenarios and Bubble index all use Hong Kong-wide prices. District data do not "
         "make them regional forecasts; the Asia comparison is descriptive and outside the fitted model."
     )
+    st.subheader("Demand and supply · next research priorities")
+    st.markdown(
+        "**Demand is purchasing capacity, not just transaction activity; supply is available housing, "
+        "not just announced land.** Prioritise local financing costs and household income alongside "
+        "completed units and unsold inventory. The candidates below are research hypotheses, not fitted "
+        "predictors or current market measurements. Proposed frequencies and regional detail require "
+        "series-level verification before collection."
+    )
+    with st.expander("Demand-side variables · financing, income and households"):
+        st.markdown(
+            "| Priority | Candidate and measure | Why it may add information | Source / timing to verify |\n|---|---|---|---|\n"
+            "| D1 · First test | **Local mortgage funding cost:** observed new-loan pricing where available; otherwise a documented HIBOR/prime-based proxy, plus its spread to the Fed rate | The US rate does not fully describe local funding conditions or mortgage caps; test replacement of Fed and then incremental spread information | HKMA interest-rate tables and Residential Mortgage Survey; HKAB HIBOR. Monthly aggregation, release dates and rate definitions to verify |\n"
+            "| D2 · First test | **Jobs and purchasing power:** change in unemployment; real household income or earnings growth | Labour-market risk and payment capacity can move demand even when equities and rates are unchanged | C&SD labour and household surveys. Unemployment uses overlapping rolling three-month windows; income/earnings cadence differs by series |\n"
+            "| D3 | **Mortgage affordability:** payment on a fixed reference unit and loan design divided by household income | Separates borrowing costs from household capacity; stress the assumed loan-to-value ratio and term | C&SD income plus verified mortgage pricing. Use only price/income information already available at the forecast origin; quarterly income cannot become new monthly information |\n"
+            "| D4 | **Household formation and resident inflows:** growth in domestic households; net movement of residents as a separate measure | Household demand may affect rents before purchases; population growth is not equivalent to new households | C&SD population estimates and household statistics. Verify quarterly/semi-annual releases and census revisions |\n"
+            "| D5 | **Mortgage credit availability:** new purchase-related approvals/drawdowns, kept separate from refinancing | Access to financing may convey information beyond its price; jointly determined with transactions and house prices | HKMA Residential Mortgage Survey. Monthly, using published rather than reference dates; lagged predictive test only, not a causal demand instrument |\n"
+            "| D6 · Exploratory | **Non-local demand:** a consistently defined buyer-status or residency proxy, if a usable series can be obtained | External purchasing power is not fully measured by CNYHKD; strongest hypothesis for rents and large units | IRD duty-category statistics, Immigration Department arrivals and authorised transaction data. Verify coverage and policy breaks; these do not directly identify mainland buyers |\n\n"
+            "**Construction rules:** rate changes enter in percentage points; use log changes or "
+            "stock-normalised changes for positive quantities. Test local funding costs **instead of** "
+            "Fed first, then a spread specification, rather than adding several near-identical rates. "
+            "Use lagged information in affordability to avoid mechanically reintroducing the current "
+            "target. Talent approvals, actual arrivals, residents and new households are different "
+            "objects and must not be added as independent demand flows. Credit and duty-category "
+            "proxies require endogeneity and measurement caveats even if they improve forecasts."
+        )
+    with st.expander("Supply-side variables · delivery, inventory and pipeline"):
+        st.markdown(
+            "| Priority | Candidate and measure | Why it may add information | Source / timing to verify |\n|---|---|---|---|\n"
+            "| S1 · First test | **Private completions:** trailing 12-month completed units divided by last published private stock, by region and size where available | Measures supply reaching occupancy, not a policy promise; possible effects on rent and prices need separate tests | RVD property statistics and Property Review. Verify provisional completion series, annual stock vintage and regional coverage |\n"
+            "| S2 · First test | **Unsold inventory and forward supply:** keep completed-unsold units separate from under-construction and ready-to-start buckets | Inventory captures immediate competition; pipeline is an expectation channel with a different horizon | Housing Bureau first-hand private supply statistics. Quarterly candidate; verify publication dates, bucket definitions and first-hand sales coverage |\n"
+            "| S3 | **Private vacancy:** vacant units / private stock, separately by class and region where reported | Measures excess stock rather than construction flow; potentially more informative for local rents | RVD Property Review. Annual year-end measure with a later release; not a fresh monthly vacancy observation |\n"
+            "| S4 | **Construction pipeline:** actual commencements, and presale or building consents as separate indicators | Signals future delivery before completion; permission is not the same as a start or an available flat | Buildings Department monthly digests and Lands Department consent statistics. Verify units versus floor area, scheme coverage and release dates |\n"
+            "| S5 | **Land converted into future housing capacity:** realised disposals/lease modifications and estimated flat capacity, separate from announced programmes | A long-lag supply channel; tender prices themselves also reflect expected housing prices | Development Bureau and Lands Department. Quarterly/annual candidates; pre-specify multi-year lag hypotheses and distinguish planned from realised supply |\n"
+            "| S6 · Segmented test | **Public housing delivery and access:** PRH/HOS completions and waiting-time indicators, kept separate from private stock | Public provision may substitute for some lower-cost private rental/purchase demand; effects need not match the aggregate market | Housing Authority and Housing Bureau. Quarterly/annual candidates; different eligibility and allocation rules require separate treatment |\n\n"
+            "**Construction rules:** completed units are a flow; vacancy and unsold units are stocks. "
+            "Pipeline buckets, completed-unsold stock and vacancy may overlap under their published "
+            "definitions: do not add them together as independent supply. If first-hand sales coverage "
+            "is consistent, test months of inventory as completed-unsold stock divided by trailing "
+            "12-month first-hand sales / 12. Land, starts and completions are stages of a delivery "
+            "chain; test their lags separately rather than flooding a short regression with correlated "
+            "stages. Use the last **published** stock denominator, not a later annual revision."
+        )
+    with st.expander("Demand–supply research design · first four tests and sources"):
+        st.markdown(
+            "1. **Local-rate pass-through:** compare the Growth baseline with a Fed-to-local-rate replacement, "
+            "then an incremental local/Fed spread variant. Evaluate whether it adds information rather than duplicating rates.\n"
+            "2. **Income-risk channel:** add a lagged unemployment change first, then income growth separately; "
+            "pre-specify a small lag grid and account for overlapping survey windows.\n"
+            "3. **Delivered supply:** add trailing completions / last-known stock, matched to the region and "
+            "size segment of the price or rent target. Short-run and longer-horizon effects need not have the same sign.\n"
+            "4. **Inventory pressure:** test completed-unsold inventory or one forward pipeline measure separately "
+            "from completions; use mixed-frequency handling and check whether the history supports the chosen horizons.\n\n"
+            "**Validation gate:** use release-date-aware expanding windows and identical origins for the "
+            "candidate, Growth baseline and random walk at 1/3/6/12 months where sample length permits. "
+            "Freeze lag and transformation choices before the holdout, report RMSE/MAE and the number "
+            "of common origins, and limit repeated specification searches. Retain a channel only after "
+            "incremental out-of-sample improvement against both benchmarks. Without archived vintages, "
+            "label results latest-vintage pseudo-out-of-sample, not a real-time backtest.\n\n"
+            "**Regional requirement:** begin with Hong Kong Island / Kowloon / New Territories only where "
+            "matched target histories can be built, then districts if coverage supports them. RVD size "
+            "classes are a separate segmentation. National rates/FX can be common factors; local supply, "
+            "transactions and income exposure must match local targets. No regional series is assumed "
+            "available merely because the national series exists.\n\n"
+            "**Official discovery sources**\n"
+            "- [HKMA Monthly Statistical Bulletin](https://www.hkma.gov.hk/eng/data-publications-and-research/data-and-statistics/monthly-statistical-bulletin/) "
+            "and [Residential Mortgage Survey releases](https://www.hkma.gov.hk/eng/news-and-media/press-releases/monthly-residential-mortgage-survey-results/).\n"
+            "- [C&SD statistics](https://www.censtatd.gov.hk/en/) and "
+            "[General Household Survey](https://www.censtatd.gov.hk/en/page_1299.html).\n"
+            "- [RVD](https://www.rvd.gov.hk/), [Housing Bureau](https://www.hb.gov.hk/), "
+            "[Buildings Department](https://www.bd.gov.hk/) and [Lands Department](https://www.landsd.gov.hk/).\n"
+            "- [Development Bureau](https://www.devb.gov.hk/), [Housing Authority](https://www.housingauthority.gov.hk/), "
+            "[HKAB](https://www.hkab.org.hk/), [IRD](https://www.ird.gov.hk/) and "
+            "[Immigration Department](https://www.immd.gov.hk/).\n\n"
+            "The HKMA bulletin and C&SD portal were checked for source discovery. The remaining links "
+            "are collection starting points, not confirmation that every proposed series, regional split "
+            "or vintage archive is available. Record exact table IDs, units, coverage, licensing and "
+            "release calendars before modelling. **No new demand/supply variable has been fitted or "
+            "silently added to the current forecasts.**"
+        )
     st.markdown("**Open a section below for the research design and limitations.**")
     with st.expander("Regional targets and validation rule"):
         st.subheader("Required next step · regional disaggregation")
