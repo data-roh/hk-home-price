@@ -64,7 +64,7 @@ For Streamlit Community Cloud, use a GitHub repository, `app.py` as the entrypoi
 2. Push the project to an authorized GitHub repository. Include `app.py`, `requirements.txt`, `src/hkproperty/`, `.streamlit/config.toml`, `data/extension_model_input.csv`, and the two tracked monthly `data/asia_home_prices_*` snapshot files.
 3. Include `outputs/home_stationarity.csv` and `outputs/research_status.json` for the Model tab's stationarity evidence and ECM status. The dashboard does not rebuild them during deployment. Other audit outputs remain available for notebook research but are not needed by the dashboard.
 4. In Streamlit Community Cloud, create an app from that repository and branch, select `app.py` as the main file, and choose Python 3.13 under advanced settings.
-5. Deploy, then verify the five tabs (Data, Model, Scenario, Extensions, Bubble index) and the controls within Scenario at the assigned app URL. The committed theme configuration keeps widgets and tables light; charts explicitly set their text colors and disable Streamlit's Plotly theme override.
+5. Deploy, then verify the six tabs (Data, Model, Scenario, Extensions, Bubble index, Regime) and the controls within Scenario at the assigned app URL. The committed theme configuration keeps widgets and tables light; charts explicitly set their text colors and disable Streamlit's Plotly theme override.
 
 Never upload virtual environments, `.env` files, or `.streamlit/secrets.toml`. If secrets are needed later, configure them in Community Cloud settings instead. Optional source exports, notebooks, interview materials, and screenshots are not needed by the dashboard.
 
@@ -103,7 +103,7 @@ The foreign series have **not** been added to either forecasting specification. 
 
 ```text
 .
-├─ app.py                     Streamlit scenario lab (5 tabs)
+├─ app.py                     Streamlit scenario lab (6 tabs)
 ├─ build_monthly_master.py    Builds the monthly master and model inputs from source CSVs
 ├─ build_asia_monthly_prices.py  Refreshes the monthly Hong Kong, China and Seoul comparison
 ├─ run_research_audit.py      Variable integration audit, common-origin model comparison, status file
@@ -130,7 +130,7 @@ The foreign series have **not** been added to either forecasting specification. 
 
 ## App
 
-`python -m streamlit run app.py` opens five tabs:
+`python -m streamlit run app.py` opens six tabs:
 
 | Tab | Content |
 |---|---|
@@ -139,6 +139,7 @@ The foreign series have **not** been added to either forecasting specification. 
 | Scenario | Growth by default, optional Level comparison, stress presets, 100 seeded residual-simulated Growth paths with bootstrap bands, end-horizon medians and CSV downloads |
 | Extensions | Explicit aggregate-model limitation and required regional disaggregation; notebook section 9 channels, policy layers, validation rules, seasonal regressors and ECM |
 | Bubble index | Four thresholded cycle states, shared monthly history bands, smoothed Markov transitions and 1/3/6-month state probabilities, transition counts and signal CSV download |
+| Regime | Block-moment regime diagnostic: non-overlapping blocks of monthly log returns plotted as (mean, variance) points against single-regime sampling-error ellipses, two-cluster separation with a block-permutation p-value, kurtosis mixture cross-check and block CSV download |
 
 The Model tab consolidates the notebook's rounded reference estimates without repeating generic equations or live coefficient tables. Its 199-month reference window describes input data; Growth estimation loses initial rows to differences and lagged growth. Scenario models are refitted to the supplied data. Detailed forecast scorecards, residual diagnostics and extension audits remain in the notebooks and precomputed research outputs rather than separate dashboard tabs.
 
@@ -155,6 +156,8 @@ The Bubble index is a descriptive price-cycle view, not a statistical bubble tes
 The first-order Markov outlook estimates monthly transitions from all available classified history, excluding missing/unclassified months and calendar gaps. The full transition heatmap appears first. Below it, a large four-state diagram shows all 16 directed transitions at once: arrows between states and a curved self-loop for staying in each state. Every arrow has its one-month probability label, and hovering shows the observed count. The latest state is outlined; detailed probability and count tables remain in an expander. The estimate adds 0.5 pseudo-count per cell; unseen rows therefore default to a uniform prior, not empirical evidence. Observed transition counts and sparse rows are displayed. State probabilities at 1, 3 and 6 months are calculated exactly by matrix propagation and sum to 100%. They assume stable transition probabilities, are fitted in sample, and are not validated real-time forecasts, price-return probabilities or speculative-bubble probabilities. Changing the thresholds refits the classifications and transitions.
 
 The price/rent signal is the ratio of the price and rent indices relative to its own trailing 60-month mean, not a rental yield or a separate state classifier. Each chart retains a separate y-axis, a dashed zero reference and a dotted latest-value reference. Trailing averages include the current month, missing months are not filled, and no future observations enter the calculations. State shading is not a calibrated overheating threshold. The displayed date is the latest supplied observation, not necessarily the current month.
+
+The Regime tab is a descriptive diagnostic, not a fitted regime-switching model. Monthly log returns are split into non-overlapping blocks aligned to the latest month; each block's sample mean (x) and sample variance (y) form one point, and the scatter is compared with 1 and 2 sampling-error ellipses around the pooled moments under a single-regime null. Sampling errors optionally shrink the per-block sample size by an AR(1) effective-sample correction. Blocks are standardised and split into two k-means clusters; the centroid distance is tested against a null built from reshuffled 6-month sub-blocks, so only the permutation p-value — not the raw distance — carries evidential weight. A kurtosis cross-check compares pooled with within-block excess kurtosis, since mixing blocks with different variances fattens pooled tails. A two-panel timeline shows the original price index and the monthly log returns with each block shaded by its cluster, and an overlapping rolling trajectory is shown for context only. The dashboard fixes the settings at 24-month blocks and 500 permutations; the AR(1) correction and the rolling overlay are toggles under the Advanced options expander, and the theory, kurtosis cross-check and method notes sit in expanders below the charts. Results depend on the block length, which `docs/05_Regime_Diagnostic.md` discusses; conclusions should be checked across several lengths.
 
 ## Notebooks
 
@@ -173,6 +176,7 @@ The price/rent signal is the ratio of the price and rent indices relative to its
 | `docs/02_Methodology_Notes.md` | Methodology reference: GLS/FGLS, AR errors vs. lagged Y, SARIMAX, cointegration, seasonality, evaluation design |
 | `docs/03_Extensions_and_New_Variables.md` | Extension roadmap and experimental design (model change vs. new variables) |
 | `docs/04_Interview_Discussion.md` | Interview pitch and answer skeletons |
+| `docs/05_Regime_Diagnostic.md` | Regime tab reference: block-moment theory, every control and plot element, distance and permutation test, kurtosis mixture signature, limitations |
 | `docs/analysis_review.md` | Review of the real-data analysis with current numbers |
 | `docs/extension_review.md` | AltData candidates, decisions, and current extension results |
 

@@ -7,6 +7,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
+from scipy import stats as sp_stats
+from scipy.cluster.vq import kmeans2
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -128,7 +130,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tabs = st.tabs(["Data", "Model", "Scenario", "Extensions", "Bubble index"])
+tabs = st.tabs(["Data", "Model", "Scenario", "Extensions", "Bubble index", "Regime"])
 
 
 def render_data_notes():
@@ -1086,3 +1088,286 @@ def render_bubble_index():
 
 with tabs[4]:
     render_bubble_index()
+
+
+@st.cache_data(show_spinner="Running the block-moment regime diagnostic…")
+def regime_moment_analysis(path: str, modified_ns: int, block_len: int, n_perm: int,
+                           adjust_ar1: bool, sub_block: int = 6, seed: int = 0):
+    frame = read_monthly(path)
+    price = frame[HOME.target].dropna()
+    returns = (100 * np.log(price).diff()).dropna()
+    n_blocks = len(returns) // block_len
+    if n_blocks < 4:
+        return None
+    usable = returns.iloc[len(returns) - n_blocks * block_len:]
+    values = usable.to_numpy().reshape(n_blocks, block_len)
+
+    pooled_mean = float(usable.mean())
+    pooled_var = float(usable.var(ddof=1))
+    rho = float(max(0.0, usable.autocorr(1))) if adjust_ar1 else 0.0
+    n_eff = block_len * (1 - rho) / (1 + rho)
+    se_mean = float(np.sqrt(pooled_var / n_eff))
+    se_var = float(pooled_var * np.sqrt(2 / (n_eff - 1)))
+
+    block_means = values.mean(axis=1)
+    block_vars = values.var(axis=1, ddof=1)
+    z = np.column_stack([(block_means - pooled_mean) / se_mean, (block_vars - pooled_var) / se_var])
+    centroids, labels = kmeans2(z, 2, minit="++", seed=seed)
+    distance = float(np.linalg.norm(centroids[0] - centroids[1]))
+    # Deterministic label order: cluster A has the lower mean return.
+    if block_means[labels == 0].mean() > block_means[labels == 1].mean():
+        labels = 1 - labels
+
+    rng = np.random.default_rng(seed)
+    flat = usable.to_numpy()
+    n_chunks = len(flat) // sub_block
+    chunks = flat[: n_chunks * sub_block].reshape(n_chunks, sub_block)
+    null = np.empty(n_perm)
+    for i in range(n_perm):
+        perm = chunks[rng.permutation(n_chunks)].ravel()[: n_blocks * block_len].reshape(n_blocks, block_len)
+        z_perm = np.column_stack([
+            (perm.mean(axis=1) - pooled_mean) / se_mean,
+            (perm.var(axis=1, ddof=1) - pooled_var) / se_var,
+        ])
+        cent, _ = kmeans2(z_perm, 2, minit="++", seed=seed + 1)
+        null[i] = float(np.linalg.norm(cent[0] - cent[1]))
+    p_value = float((1 + (null >= distance).sum()) / (1 + n_perm))
+
+    block_table = pd.DataFrame({
+        "start": [usable.index[i * block_len] for i in range(n_blocks)],
+        "end": [usable.index[(i + 1) * block_len - 1] for i in range(n_blocks)],
+        "mean": block_means,
+        "variance": block_vars,
+        "z_mean": z[:, 0],
+        "z_variance": z[:, 1],
+        "excess_kurtosis": [float(sp_stats.kurtosis(row)) for row in values],
+        "cluster": np.where(labels == 0, "A", "B"),
+    })
+    rolling = pd.DataFrame({
+        "mean": usable.rolling(block_len).mean(),
+        "variance": usable.rolling(block_len).var(ddof=1),
+    }).dropna()
+    pos = price.index.get_loc(usable.index[0])
+    return {
+        "returns": usable, "price": price.iloc[max(0, pos - 1):],
+        "blocks": block_table, "rolling": rolling,
+        "pooled_mean": pooled_mean, "pooled_var": pooled_var,
+        "se_mean": se_mean, "se_var": se_var, "rho": rho, "n_eff": float(n_eff),
+        "distance": distance, "null": null, "p_value": p_value,
+        "kurtosis_full": float(sp_stats.kurtosis(flat)),
+        "kurtosis_blocks": float(block_table["excess_kurtosis"].mean()),
+    }
+
+
+def render_regime_moments():
+    st.subheader("Regime diagnostic · block moments vs sampling error")
+    st.caption(
+        "Monthly log returns of the home-price index are split into non-overlapping blocks aligned to the "
+        "latest month. Each block is one point: x is its sample mean, y its sample variance. The scatter of "
+        "these points is the empirical sampling distribution of (mean, variance); if one regime generated the "
+        "data, the points should sit inside the sampling-error ellipses. This is a descriptive diagnostic, "
+        "not a fitted regime-switching model."
+    )
+    block_len, n_perm = 24, 500
+    adjust_ar1 = bool(st.session_state.get("regime_ar1", True))
+    show_rolling = bool(st.session_state.get("regime_rolling", True))
+    st.caption(
+        "Fixed settings: **24-month blocks** — long enough for stable block moments while keeping at least "
+        "8 blocks for clustering — and **500 permutations**, a p-value resolution of ~0.002, ample for a 5% "
+        "test. Theory and further options are in the expanders at the bottom."
+    )
+    result = regime_moment_analysis(str(DATA_PATH), DATA_PATH.stat().st_mtime_ns, block_len, n_perm, adjust_ar1)
+    if result is None:
+        st.warning("Fewer than four complete blocks are available at this block length. Choose a shorter block.")
+        return
+    blocks = result["blocks"]
+    significant = result["p_value"] < 0.05
+    threshold = float(np.percentile(result["null"], 95))
+
+    scatter = go.Figure()
+    theta = np.linspace(0, 2 * np.pi, 120)
+    for radius, dash in [(1, "dot"), (2, "dash")]:
+        scatter.add_trace(go.Scatter(
+            x=result["pooled_mean"] + radius * result["se_mean"] * np.cos(theta),
+            y=result["pooled_var"] + radius * result["se_var"] * np.sin(theta),
+            mode="lines", line={"color": "#8aa6a1", "width": 1.3, "dash": dash},
+            name=f"{radius}·SE ellipse", hoverinfo="skip"))
+    if show_rolling:
+        rolling = result["rolling"]
+        scatter.add_trace(go.Scatter(
+            x=rolling["mean"], y=rolling["variance"], mode="lines",
+            line={"color": "#b9c8c4", "width": 1}, name="Rolling trajectory",
+            text=[f"{d:%Y-%m}" for d in rolling.index],
+            hovertemplate="window ending %{text}<br>mean %{x:+.2f} · var %{y:.2f}<extra></extra>"))
+    for cluster, colour in [("A", PALETTE[0]), ("B", PALETTE[1])]:
+        part = blocks[blocks["cluster"] == cluster]
+        scatter.add_trace(go.Scatter(
+            x=part["mean"], y=part["variance"], mode="markers+text",
+            marker={"color": colour, "size": 13, "line": {"color": "#ffffff", "width": 1}},
+            text=[f"{s:%y.%m}–{e:%y.%m}" for s, e in zip(part["start"], part["end"])],
+            textposition="top center", textfont={"size": 11, "color": "#465e62"},
+            name=f"Cluster {cluster}",
+            customdata=np.column_stack([part["z_mean"], part["z_variance"]]),
+            hovertemplate="%{text}<br>mean %{x:+.3f} · var %{y:.3f}"
+                          "<br>z = (%{customdata[0]:+.2f}, %{customdata[1]:+.2f})<extra></extra>"))
+    scatter.add_trace(go.Scatter(x=[result["pooled_mean"]], y=[result["pooled_var"]], mode="markers",
+                                 marker={"symbol": "x", "color": "#132b2e", "size": 11},
+                                 name="Pooled (single-regime null)",
+                                 hovertemplate="pooled mean %{x:+.3f} · pooled var %{y:.3f}<extra></extra>"))
+    scatter.update_layout(height=520, xaxis_title="Block mean · monthly log return %",
+                          yaxis_title="Block variance", legend={"orientation": "h", "y": 1.08}, **CHART)
+    st.plotly_chart(scatter, width="stretch", theme=None, key="regime_scatter")
+    st.caption("Dotted and dashed ellipses: one and two sampling errors around the pooled moments under a "
+               "single-regime null. Points far outside the 2·SE ellipse, or two clusters separated by more "
+               "than the permutation threshold, indicate distinct regimes.")
+
+    columns = st.columns((3, 2))
+    with columns[0]:
+        timeline = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+                                 row_heights=[0.5, 0.5])
+        fills = {"A": "#d2e8e6", "B": "#f8e2d6"}
+        timeline.add_trace(go.Scatter(x=result["price"].index, y=result["price"], mode="lines",
+                                      line={"color": "#087f83", "width": 2}, name="Price index",
+                                      hovertemplate="%{x|%Y-%m}<br>index %{y:.1f}<extra></extra>"),
+                           row=1, col=1)
+        timeline.add_trace(go.Scatter(x=result["returns"].index, y=result["returns"], mode="lines",
+                                      line={"color": "#24484b", "width": 1.6}, name="Monthly return",
+                                      hovertemplate="%{x|%Y-%m}<br>%{y:+.2f}%<extra></extra>"),
+                           row=2, col=1)
+        timeline.add_hline(y=0, line_color="#607276", line_dash="dash", line_width=1, row=2, col=1)
+        for row in blocks.itertuples():
+            timeline.add_vrect(x0=row.start, x1=row.end + pd.offsets.MonthBegin(1),
+                               fillcolor=fills[row.cluster], opacity=0.85, line_width=0, layer="below",
+                               row="all", col=1)
+        timeline.update_layout(height=470, showlegend=False,
+                               **{key: value for key, value in CHART.items() if key not in ("xaxis", "yaxis")})
+        timeline.update_layout(title_text="Blocks in time · teal = cluster A (lower mean), orange = cluster B")
+        timeline.update_xaxes(automargin=True, tickfont={"size": 13, "color": "#344f53"}, gridcolor="#dce5e1")
+        timeline.update_yaxes(automargin=True, tickfont={"size": 13, "color": "#344f53"}, gridcolor="#dce5e1")
+        timeline.update_yaxes(title_text="Price index", row=1, col=1)
+        timeline.update_yaxes(title_text="Monthly log return %", row=2, col=1)
+        st.plotly_chart(timeline, width="stretch", theme=None, key="regime_timeline")
+        st.caption("Top: the original home-price index, so each block can be read against the raw series it "
+                   "summarises. Bottom: the monthly log returns the blocks are computed from. Regimes are a "
+                   "temporal claim: contiguous runs of one colour support regime structure, while colours "
+                   "alternating block by block point to noise rather than regimes.")
+    with columns[1]:
+        null_fig = go.Figure()
+        null_fig.add_trace(go.Histogram(x=result["null"], nbinsx=30, marker_color="#9fbcb7",
+                                        name="Permutation null"))
+        null_fig.add_vline(x=result["distance"], line_color="#d56734", line_width=2,
+                           annotation_text=f"observed {result['distance']:.2f}",
+                           annotation_position="top right")
+        null_fig.add_vline(x=threshold, line_color="#607276", line_dash="dash", line_width=1.5,
+                           annotation_text="95%", annotation_position="top left")
+        null_fig.update_layout(height=470, xaxis_title="Centroid distance · SE units", yaxis_title="Count",
+                               showlegend=False, **CHART)
+        null_fig.update_layout(title_text="Null distribution of cluster separation")
+        st.plotly_chart(null_fig, width="stretch", theme=None, key="regime_null")
+        st.caption(f"{n_perm} block permutations (6-month sub-blocks reshuffled to preserve short-run "
+                   "autocorrelation), each re-clustered the same way as the observed data.")
+
+    st.markdown("**Test result**")
+    metrics = st.columns(2)
+    metrics[0].metric("Cluster separation", f"{result['distance']:.2f} SE",
+                      help="Distance between the two k-means centroids after dividing each axis by its "
+                           "single-regime sampling error.")
+    metrics[1].metric("Permutation p-value", f"{result['p_value']:.3f}",
+                      help="Share of block-permuted series whose best two-cluster split separates at least "
+                           "as far. Small values are evidence of two regimes.")
+    if significant:
+        st.success("The two-cluster separation exceeds what single-regime sampling error produces in 95% of "
+                   "block permutations: evidence of at least two (mean, variance) regimes.")
+    else:
+        st.info("The separation between the two best-fitting clusters is within the range that sampling error "
+                "alone produces under one regime. These blocks do not establish two regimes.")
+
+    with st.expander("Theory · why two moments and a distance are enough"):
+        st.markdown(
+            "**1 · Each block statistic has a known sampling distribution.** Take $n$ returns from one "
+            "regime with mean $\\mu$ and variance $\\sigma^2$. The central limit theorem gives the block mean, "
+            "and (for near-normal returns) a $\\chi^2$ law gives the block variance:"
+        )
+        st.latex(r"\bar r \;\dot\sim\; \mathcal N\!\left(\mu,\ \tfrac{\sigma^2}{n}\right), \qquad "
+                 r"\frac{(n-1)\,s^2}{\sigma^2} \sim \chi^2_{\,n-1} \;\Rightarrow\; "
+                 r"s^2 \;\dot\sim\; \mathcal N\!\left(\sigma^2,\ \tfrac{2\sigma^4}{n-1}\right)")
+        st.markdown(
+            "**2 · Under one regime the (mean, variance) cloud is a single ellipse.** For normal data "
+            "$\\bar r$ and $s^2$ are independent, so block points scatter around the true $(\\mu, \\sigma^2)$ "
+            "in an axis-aligned ellipse whose half-widths are exactly the sampling errors $SE_{\\bar r}$ and "
+            "$SE_{s^2}$. Sampling error is therefore the yardstick: it says how far apart two block points may "
+            "sit *by chance alone*."
+        )
+        st.markdown(
+            "**3 · Standardising turns separation into a testable distance.** Dividing each axis by its "
+            "sampling error makes every block point approximately standard bivariate normal under the "
+            "single-regime null. The distance between two groups of blocks,"
+        )
+        st.latex(r"D=\sqrt{\left(\frac{\bar r_1-\bar r_2}{SE_{\bar r}}\right)^{2}"
+                 r"+\left(\frac{s_1^{2}-s_2^{2}}{SE_{s^2}}\right)^{2}},")
+        st.markdown(
+            "is then a Mahalanobis-type statistic: values near $\\sqrt{2}$ are what chance produces, while "
+            "$D \\gg 2\\text{–}3$ cannot be explained by sampling error. The mean axis alone is a two-sample "
+            "$t$-test and the variance axis alone an $F$-test; the distance combines both in one picture."
+        )
+        st.markdown(
+            "**4 · Two regimes split the cloud in two.** If the series alternates between regimes "
+            "$(\\mu_1,\\sigma_1^2)$ and $(\\mu_2,\\sigma_2^2)$, blocks concentrate around two distinct centres "
+            "and $D$ grows with $n$ — sampling errors shrink like $1/\\sqrt{n}$ while the true gap stays fixed. "
+            "One regime: one cloud inside the ellipse. Two regimes: two clouds the ellipse cannot cover."
+        )
+    with st.expander("Advanced options"):
+        st.checkbox("AR(1)-adjust sampling errors", value=True, key="regime_ar1",
+                    help="Shrinks the effective sample size to n·(1−ρ)/(1+ρ) using the lag-1 "
+                         "autocorrelation of monthly returns. Index smoothing makes this large.")
+        st.checkbox("Rolling trajectory overlay", value=True, key="regime_rolling",
+                    help="Overlapping rolling windows of the same length, for visualising when "
+                         "the market moved between clusters. Not used in the test.")
+    with st.expander("Kurtosis cross-check · mixture signature"):
+        kurt_cols = st.columns(3)
+        kurt_cols[0].metric("Full-sample excess kurtosis", f"{result['kurtosis_full']:+.2f}")
+        kurt_cols[1].metric("Mean within-block excess kurtosis", f"{result['kurtosis_blocks']:+.2f}")
+        kurt_gap = result["kurtosis_full"] - result["kurtosis_blocks"]
+        kurt_cols[2].metric("Gap (full − within)", f"{kurt_gap:+.2f}",
+                            help="Mixing blocks with different variances fattens the pooled tails even when each "
+                                 "block is near-normal, so a clearly positive gap supports variance-regime mixing.")
+        if kurt_gap > 0.5 and result["kurtosis_full"] > 0:
+            st.caption("Pooled tails are fatter than within-block tails: consistent with variance-regime mixing.")
+        else:
+            st.caption("No clear mixture signature: pooled kurtosis is not meaningfully above within-block "
+                       "kurtosis.")
+
+    with st.expander("Method, formulas and limitations"):
+        st.markdown(
+            "Each complete block of monthly log returns contributes one point. Under a single-regime null "
+            "the block statistics scatter around the pooled moments with standard errors"
+        )
+        st.latex(r"SE_{\bar r} = \sqrt{\hat\sigma^2 / n_{\text{eff}}}, \qquad "
+                 r"SE_{s^2} = \hat\sigma^2\sqrt{2/(n_{\text{eff}}-1)}, \qquad "
+                 r"n_{\text{eff}} = n\,\frac{1-\hat\rho_1}{1+\hat\rho_1}")
+        st.markdown(
+            "Blocks are standardised by these errors, split into two k-means clusters, and the centroid "
+            "distance is compared with the same statistic on block-permuted series (6-month sub-blocks, so "
+            "short-run autocorrelation survives under the null). k-means always finds *some* split, which is "
+            "why only the permutation p-value — not the raw distance — carries evidential weight."
+        )
+        st.latex(r"D = \left\lVert \bar z_{A} - \bar z_{B} \right\rVert_2, \qquad "
+                 r"p = \frac{1 + \#\{D^{\text{perm}} \ge D\}}{1 + N_{\text{perm}}}")
+        st.markdown(
+            "**Limitations.** The variance standard error assumes near-normal blocks; the AR(1) effective-sample "
+            "correction is a first-order approximation and the index's smoothing inflates ρ, so sampling errors "
+            "are indicative rather than exact. The test asks only whether *two* clusters separate — it does not "
+            "estimate the number of regimes, their transition dates or probabilities (a Markov-switching model "
+            "would). Overlapping rolling points are shown for context only; using them in the test would "
+            "overstate the sample. Results depend on block length, so check robustness across several lengths "
+            "before concluding anything."
+        )
+    export = blocks.copy()
+    export["start"] = export["start"].dt.strftime("%Y-%m")
+    export["end"] = export["end"].dt.strftime("%Y-%m")
+    st.download_button("Download block moments", export.to_csv(index=False).encode("utf-8"),
+                       "regime_block_moments.csv", "text/csv")
+
+
+with tabs[5]:
+    render_regime_moments()
