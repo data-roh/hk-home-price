@@ -1218,7 +1218,10 @@ def render_regime_moments():
                           yaxis_title="Block variance", legend={"orientation": "h", "y": 1.08}, **CHART)
     st.plotly_chart(scatter, width="stretch", theme=None, key="regime_scatter")
     st.caption("Dotted and dashed ellipses: one and two sampling errors around the pooled moments under a "
-               "single-regime null. Points far outside the 2·SE ellipse, or two clusters separated by more "
+               "single-regime null — they are the null's chance region, not k-means boundaries. Clustering "
+               "runs in standardised coordinates (each axis divided by its sampling error), where these "
+               "ellipses are circles; they appear elliptical here only because the two axes carry different "
+               "units. Points far outside the 2·SE ellipse, or two clusters separated by more "
                "than the permutation threshold, indicate distinct regimes.")
 
     columns = st.columns((3, 2))
@@ -1241,13 +1244,14 @@ def render_regime_moments():
                                row="all", col=1)
         timeline.update_layout(height=470, showlegend=False,
                                **{key: value for key, value in CHART.items() if key not in ("xaxis", "yaxis")})
-        timeline.update_layout(title_text="Blocks in time · teal = cluster A (lower mean), orange = cluster B")
+        timeline.update_layout(title_text="Blocks in time")
         timeline.update_xaxes(automargin=True, tickfont={"size": 13, "color": "#344f53"}, gridcolor="#dce5e1")
         timeline.update_yaxes(automargin=True, tickfont={"size": 13, "color": "#344f53"}, gridcolor="#dce5e1")
         timeline.update_yaxes(title_text="Price index", row=1, col=1)
         timeline.update_yaxes(title_text="Monthly log return %", row=2, col=1)
         st.plotly_chart(timeline, width="stretch", theme=None, key="regime_timeline")
-        st.caption("Top: the original home-price index, so each block can be read against the raw series it "
+        st.caption("Green shading = cluster A (lower mean return) · orange shading = cluster B. "
+                   "Top: the original home-price index, so each block can be read against the raw series it "
                    "summarises. Bottom: the monthly log returns the blocks are computed from. Regimes are a "
                    "temporal claim: contiguous runs of one colour support regime structure, while colours "
                    "alternating block by block point to noise rather than regimes.")
