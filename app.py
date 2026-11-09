@@ -1134,6 +1134,7 @@ def regime_moment_analysis(path: str, modified_ns: int, block_len: int, n_perm: 
     p_value = float((1 + (null >= distance).sum()) / (1 + n_perm))
 
     block_table = pd.DataFrame({
+        "block": np.arange(1, n_blocks + 1),
         "start": [usable.index[i * block_len] for i in range(n_blocks)],
         "end": [usable.index[(i + 1) * block_len - 1] for i in range(n_blocks)],
         "mean": block_means,
@@ -1203,9 +1204,10 @@ def render_regime_moments():
         part = blocks[blocks["cluster"] == cluster]
         scatter.add_trace(go.Scatter(
             x=part["mean"], y=part["variance"], mode="markers+text",
-            marker={"color": colour, "size": 13, "line": {"color": "#ffffff", "width": 1}},
-            text=[f"{s:%y.%m}–{e:%y.%m}" for s, e in zip(part["start"], part["end"])],
-            textposition="top center", textfont={"size": 11, "color": "#465e62"},
+            marker={"color": colour, "size": 14, "line": {"color": "#ffffff", "width": 1}},
+            text=[f"({b}) {s:%y.%m}–{e:%y.%m}"
+                  for b, s, e in zip(part["block"], part["start"], part["end"])],
+            textposition="top center", textfont={"size": 14, "color": "#132b2e"}, cliponaxis=False,
             name=f"Cluster {cluster}",
             customdata=np.column_stack([part["z_mean"], part["z_variance"]]),
             hovertemplate="%{text}<br>mean %{x:+.3f} · var %{y:.3f}"
@@ -1214,8 +1216,15 @@ def render_regime_moments():
                                  marker={"symbol": "x", "color": "#132b2e", "size": 11},
                                  name="Pooled (single-regime null)",
                                  hovertemplate="pooled mean %{x:+.3f} · pooled var %{y:.3f}<extra></extra>"))
-    scatter.update_layout(height=520, xaxis_title="Block mean · monthly log return %",
-                          yaxis_title="Block variance", legend={"orientation": "h", "y": 1.08}, **CHART)
+    scatter.update_layout(height=680, xaxis_title="Block mean · monthly log return %",
+                          yaxis_title="Block variance", legend={"orientation": "h", "y": 1.06}, **CHART)
+    scatter.update_xaxes(tickfont={"size": 15, "color": "#132b2e"})
+    scatter.update_yaxes(tickfont={"size": 15, "color": "#132b2e"})
+    extent = np.concatenate([blocks["mean"].to_numpy(),
+                             [result["pooled_mean"] - 2 * result["se_mean"],
+                              result["pooled_mean"] + 2 * result["se_mean"]]])
+    pad = 0.14 * (extent.max() - extent.min())
+    scatter.update_xaxes(range=[float(extent.min() - pad), float(extent.max() + pad)])
     st.plotly_chart(scatter, width="stretch", theme=None, key="regime_scatter")
     st.caption("Dotted and dashed ellipses: one and two sampling errors around the pooled moments under a "
                "single-regime null — they are the null's chance region, not k-means boundaries. Clustering "
@@ -1224,52 +1233,55 @@ def render_regime_moments():
                "units. Points far outside the 2·SE ellipse, or two clusters separated by more "
                "than the permutation threshold, indicate distinct regimes.")
 
-    columns = st.columns((3, 2))
-    with columns[0]:
-        timeline = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.06,
-                                 row_heights=[0.5, 0.5])
-        fills = {"A": "#d2e8e6", "B": "#f8e2d6"}
-        timeline.add_trace(go.Scatter(x=result["price"].index, y=result["price"], mode="lines",
-                                      line={"color": "#087f83", "width": 2}, name="Price index",
-                                      hovertemplate="%{x|%Y-%m}<br>index %{y:.1f}<extra></extra>"),
-                           row=1, col=1)
-        timeline.add_trace(go.Scatter(x=result["returns"].index, y=result["returns"], mode="lines",
-                                      line={"color": "#24484b", "width": 1.6}, name="Monthly return",
-                                      hovertemplate="%{x|%Y-%m}<br>%{y:+.2f}%<extra></extra>"),
-                           row=2, col=1)
-        timeline.add_hline(y=0, line_color="#607276", line_dash="dash", line_width=1, row=2, col=1)
-        for row in blocks.itertuples():
-            timeline.add_vrect(x0=row.start, x1=row.end + pd.offsets.MonthBegin(1),
-                               fillcolor=fills[row.cluster], opacity=0.85, line_width=0, layer="below",
-                               row="all", col=1)
-        timeline.update_layout(height=470, showlegend=False,
-                               **{key: value for key, value in CHART.items() if key not in ("xaxis", "yaxis")})
-        timeline.update_layout(title_text="Blocks in time")
-        timeline.update_xaxes(automargin=True, tickfont={"size": 13, "color": "#344f53"}, gridcolor="#dce5e1")
-        timeline.update_yaxes(automargin=True, tickfont={"size": 13, "color": "#344f53"}, gridcolor="#dce5e1")
-        timeline.update_yaxes(title_text="Price index", row=1, col=1)
-        timeline.update_yaxes(title_text="Monthly log return %", row=2, col=1)
-        st.plotly_chart(timeline, width="stretch", theme=None, key="regime_timeline")
-        st.caption("Green shading = cluster A (lower mean return) · orange shading = cluster B. "
-                   "Top: the original home-price index, so each block can be read against the raw series it "
-                   "summarises. Bottom: the monthly log returns the blocks are computed from. Regimes are a "
-                   "temporal claim: contiguous runs of one colour support regime structure, while colours "
-                   "alternating block by block point to noise rather than regimes.")
-    with columns[1]:
-        null_fig = go.Figure()
-        null_fig.add_trace(go.Histogram(x=result["null"], nbinsx=30, marker_color="#9fbcb7",
-                                        name="Permutation null"))
-        null_fig.add_vline(x=result["distance"], line_color="#d56734", line_width=2,
-                           annotation_text=f"observed {result['distance']:.2f}",
-                           annotation_position="top right")
-        null_fig.add_vline(x=threshold, line_color="#607276", line_dash="dash", line_width=1.5,
-                           annotation_text="95%", annotation_position="top left")
-        null_fig.update_layout(height=470, xaxis_title="Centroid distance · SE units", yaxis_title="Count",
-                               showlegend=False, **CHART)
-        null_fig.update_layout(title_text="Null distribution of cluster separation")
-        st.plotly_chart(null_fig, width="stretch", theme=None, key="regime_null")
-        st.caption(f"{n_perm} block permutations (6-month sub-blocks reshuffled to preserve short-run "
-                   "autocorrelation), each re-clustered the same way as the observed data.")
+    timeline = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+                             row_heights=[0.5, 0.5])
+    fills = {"A": "#d2e8e6", "B": "#f8e2d6"}
+    timeline.add_trace(go.Scatter(x=result["price"].index, y=result["price"], mode="lines",
+                                  line={"color": "#087f83", "width": 2}, name="Price index",
+                                  hovertemplate="%{x|%Y-%m}<br>index %{y:.1f}<extra></extra>"),
+                       row=1, col=1)
+    timeline.add_trace(go.Scatter(x=result["returns"].index, y=result["returns"], mode="lines",
+                                  line={"color": "#24484b", "width": 1.6}, name="Monthly return",
+                                  hovertemplate="%{x|%Y-%m}<br>%{y:+.2f}%<extra></extra>"),
+                       row=2, col=1)
+    timeline.add_hline(y=0, line_color="#607276", line_dash="dash", line_width=1, row=2, col=1)
+    for row in blocks.itertuples():
+        timeline.add_vrect(x0=row.start, x1=row.end + pd.offsets.MonthBegin(1),
+                           fillcolor=fills[row.cluster], opacity=0.85, line_width=0, layer="below",
+                           row="all", col=1)
+        timeline.add_annotation(x=row.start + (row.end - row.start) / 2, xref="x",
+                                y=0.97, yref="y domain", yanchor="top", showarrow=False,
+                                text=f"<b>({row.block})</b>",
+                                font={"size": 15, "color": "#344f53"})
+    timeline.update_layout(height=470, showlegend=False,
+                           **{key: value for key, value in CHART.items() if key not in ("xaxis", "yaxis")})
+    timeline.update_layout(title_text="Blocks in time")
+    timeline.update_xaxes(automargin=True, tickfont={"size": 13, "color": "#344f53"}, gridcolor="#dce5e1")
+    timeline.update_yaxes(automargin=True, tickfont={"size": 13, "color": "#344f53"}, gridcolor="#dce5e1")
+    timeline.update_yaxes(title_text="Price index", row=1, col=1)
+    timeline.update_yaxes(title_text="Monthly log return %", row=2, col=1)
+    st.plotly_chart(timeline, width="stretch", theme=None, key="regime_timeline")
+    st.caption("The numbers above each shaded span match the numbered points in the scatter, so every block "
+               "can be traced to its episode in the price history. Green shading = cluster A (lower mean "
+               "return) · orange shading = cluster B. Top: the original home-price index. Bottom: the monthly "
+               "log returns the blocks are computed from. Regimes are a temporal claim: contiguous runs of one "
+               "colour support regime structure, while colours alternating block by block point to noise "
+               "rather than regimes.")
+
+    null_fig = go.Figure()
+    null_fig.add_trace(go.Histogram(x=result["null"], nbinsx=30, marker_color="#9fbcb7",
+                                    name="Permutation null"))
+    null_fig.add_vline(x=result["distance"], line_color="#d56734", line_width=2,
+                       annotation_text=f"observed {result['distance']:.2f}",
+                       annotation_position="top left")
+    null_fig.add_vline(x=threshold, line_color="#607276", line_dash="dash", line_width=1.5,
+                       annotation_text=f"95% · {threshold:.2f}", annotation_position="top right")
+    null_fig.update_layout(height=340, xaxis_title="Centroid distance · SE units", yaxis_title="Count",
+                           showlegend=False, **CHART)
+    null_fig.update_layout(title_text="Null distribution of cluster separation")
+    st.plotly_chart(null_fig, width="stretch", theme=None, key="regime_null")
+    st.caption(f"{n_perm} block permutations (6-month sub-blocks reshuffled to preserve short-run "
+               "autocorrelation), each re-clustered the same way as the observed data.")
 
     st.markdown("**Test result**")
     metrics = st.columns(2)
@@ -1285,6 +1297,27 @@ def render_regime_moments():
     else:
         st.info("The separation between the two best-fitting clusters is within the range that sampling error "
                 "alone produces under one regime. These blocks do not establish two regimes.")
+
+    with st.expander("Robustness · the same test at other block lengths"):
+        st.caption(
+            "A non-significant p-value at one block length is a finding, not a faulty setting — and tuning the "
+            "length until p < 0.05 would be p-hacking. The honest check is to run the identical test at every "
+            "length and report all of them: a real regime should show up consistently, and a signal that "
+            "appears only at longer blocks points to a slow-moving (mean-level) regime rather than an abrupt "
+            "one."
+        )
+        robustness = []
+        for length in (12, 18, 24, 30, 36, 42, 48):
+            res = regime_moment_analysis(str(DATA_PATH), DATA_PATH.stat().st_mtime_ns, length, n_perm,
+                                         adjust_ar1)
+            if res is None:
+                continue
+            robustness.append({
+                "Block length": f"{length} months", "Blocks": len(res["blocks"]),
+                "Separation · SE": f"{res['distance']:.2f}", "p-value": f"{res['p_value']:.3f}",
+                "Two regimes at 5%": "yes" if res["p_value"] < 0.05 else "no",
+            })
+        st.dataframe(pd.DataFrame(robustness), hide_index=True, width="stretch")
 
     with st.expander("Theory · why two moments and a distance are enough"):
         st.markdown(
